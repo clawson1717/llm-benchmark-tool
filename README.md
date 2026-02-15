@@ -10,6 +10,7 @@ A Python tool for benchmarking multiple Large Language Models (LLMs) simultaneou
 - **CSV Export**: Export benchmark results as CSV for easy analysis in Excel/Google Sheets
 - **Configurable**: Easy-to-use configuration files for defining which models to test
 - **OpenRouter Integration**: Access to 200+ models through a single API
+- **Automatic Retries**: Exponential backoff retry logic for transient network errors
 
 ## Use Cases
 
@@ -39,6 +40,43 @@ A Python tool for benchmarking multiple Large Language Models (LLMs) simultaneou
    ```bash
    python src/view_results.py results/benchmark_20240115_143022.json
    ```
+
+## Retry Logic
+
+The benchmark tool includes automatic retry logic with exponential backoff to handle transient network issues gracefully.
+
+### How It Works
+
+When an API request fails with a transient error (timeout, connection error, or 5xx server error), the tool automatically retries the request with increasing delays between attempts:
+
+- **Retry 1**: 1 second delay
+- **Retry 2**: 2 seconds delay
+- **Retry 3**: 4 seconds delay
+
+### Configuring Retries
+
+By default, the tool retries up to 3 times. You can customize this with the `--max-retries` option:
+
+```bash
+# Disable retries (0 retries)
+python src/benchmark.py "Explain quantum computing" --max-retries 0
+
+# Increase retries to 5 for unstable connections
+python src/benchmark.py "Explain quantum computing" --max-retries 5
+```
+
+### Retry Behavior
+
+**Retried errors** (transient):
+- Timeouts
+- Connection errors
+- 5xx server errors
+
+**Non-retried errors** (client errors):
+- 4xx errors (invalid API key, bad request, etc.)
+- Parse errors
+
+Retry attempts are logged to console so you can see when retries occur.
 
 ## CSV Export
 

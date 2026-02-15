@@ -11,12 +11,17 @@ import json
 import csv
 import time
 import argparse
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
 import requests
 from tqdm import tqdm
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 
 # Default API endpoint
@@ -29,8 +34,38 @@ def load_config(config_path: str = "config/models.json") -> dict:
         return json.load(f)
 
 
-def query_model(model_id: str, prompt: str, api_key: str) -> dict:
-    """Send a single prompt to a model via OpenRouter API."""
+def is_transient_error(exception) -> bool:
+    """Check if an exception represents a transient error that should be retried.
+    
+    Transient errors include: timeouts, connection errors, 5xx server errors.
+    Non-transient (client) errors like 4xx are not retried.
+    """
+    if isinstance(exception, requests.exceptions.Timeout):
+        return True
+    if isinstance(exception, requests.exceptions.ConnectionError):
+        return True
+    if isinstance(exception, requests.exceptions.HTTPError):
+        # Check if it's a 5xx error (server error) - these should be retried
+        response = exception.response
+        if response.status_code >= 500:
+            return True
+        # 4xx errors are client errors - don't retry (invalid API key, bad request, etc.)
+        return False
+    return False
+
+
+def query_model(model_id: str, prompt: str, api_key: str, max_retries: int = 3) -> dict:
+    """Send a single prompt to a model via OpenRouter API with retry logic.
+    
+    Args:
+        model_id: The model identifier (e.g., "openai/gpt-4o")
+        prompt: The prompt text to send
+        api_key: The OpenRouter API key
+        max_retries: Maximum number of retry attempts (default: 3)
+    
+    Returns:
+        Dictionary containing the response data or error information
+    """
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -46,55 +81,78 @@ def query_model(model_id: str, prompt: str, api_key: str) -> dict:
     }
     
     start_time = time.time()
+    last_exception = None
     
-    try:
-        response = requests.post(
-            OPENROUTER_API_URL,
-            headers=headers,
-            json=payload,
-            timeout=120
-        )
-        response.raise_for_status()
-        data = response.json()
-        
-        elapsed_time = time.time() - start_time
-        
-        return {
-            "model": model_id,
-            "success": True,
-            "response": data["choices"][0]["message"]["content"],
-            "response_time": round(elapsed_time, 2),
-            "tokens_used": data.get("usage", {}).get("total_tokens", 0),
-            "error": None
-        }
-    except requests.exceptions.RequestException as e:
-        elapsed_time = time.time() - start_time
-        return {
-            "model": model_id,
-            "success": False,
-            "response": None,
-            "response_time": round(elapsed_time, 2),
-            "tokens_used": 0,
-            "error": str(e)
-        }
-    except (KeyError, IndexError) as e:
-        elapsed_time = time.time() - start_time
-        return {
-            "model": model_id,
-            "success": False,
-            "response": None,
-            "response_time": round(elapsed_time, 2),
-            "tokens_used": 0,
-            "error": f"Parse error: {str(e)}"
-        }
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.post(
+                OPENROUTER_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=120
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            elapsed_time = time.time() - start_time
+            
+            return {
+                "model": model_id,
+                "success": True,
+                "response": data["choices"][0]["message"]["content"],
+                "response_time": round(elapsed_time, 2),
+                "tokens_used": data.get("usage", {}).get("total_tokens", 0),
+                "error": None
+            }
+        except (requests.exceptions.RequestException, KeyError, IndexError) as e:
+            last_exception = e
+            
+            # Check if we should retry this error
+            if attempt < max_retries and is_transient_error(e):
+                # Exponential backoff: 1s, 2s, 4s between retries
+                delay = 2 ** attempt
+                logger.warning(f"Attempt {attempt + 1}/{max_retries + 1} failed for {model_id}: {str(e)}. Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                # Don't retry on non-transient errors or if we've exhausted retries
+                if not is_transient_error(e):
+                    logger.info(f"Request failed for {model_id} with non-transient error (no retry): {str(e)}")
+                break
+    
+    # All retries exhausted or non-retryable error
+    elapsed_time = time.time() - start_time
+    error_msg = str(last_exception)
+    if isinstance(last_exception, (KeyError, IndexError)):
+        error_msg = f"Parse error: {error_msg}"
+    
+    return {
+        "model": model_id,
+        "success": False,
+        "response": None,
+        "response_time": round(elapsed_time, 2),
+        "tokens_used": 0,
+        "error": error_msg
+    }
 
 
-def run_benchmark(prompt: str, models: list, api_key: str, max_workers: int = 5) -> dict:
-    """Run benchmark across multiple models in parallel."""
+def run_benchmark(prompt: str, models: list, api_key: str, max_workers: int = 5, max_retries: int = 3) -> dict:
+    """Run benchmark across multiple models in parallel.
+    
+    Args:
+        prompt: The prompt to send to all models
+        models: List of model configuration dictionaries
+        api_key: The OpenRouter API key
+        max_workers: Maximum number of concurrent requests
+        max_retries: Maximum retry attempts per model on transient errors
+    
+    Returns:
+        Dictionary containing all benchmark results
+    """
     results = {
         "prompt": prompt,
         "timestamp": datetime.now().isoformat(),
         "model_count": len(models),
+        "max_retries": max_retries,
         "results": []
     }
     
@@ -111,7 +169,7 @@ def run_benchmark(prompt: str, models: list, api_key: str, max_workers: int = 5)
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_model = {
-            executor.submit(query_model, model["id"], prompt, api_key): model
+            executor.submit(query_model, model["id"], prompt, api_key, max_retries): model
             for model in models
         }
         
@@ -254,6 +312,12 @@ def main():
         help="OpenRouter API key (or set OPENROUTER_API_KEY env var)"
     )
     parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=3,
+        help="Maximum retry attempts for failed API requests (default: 3)"
+    )
+    parser.add_argument(
         "--format",
         choices=["json", "csv"],
         default="json",
@@ -282,10 +346,11 @@ def main():
         sys.exit(1)
     
     print(f"\nRunning benchmark with {len(models)} models...")
-    print(f"Prompt: {args.prompt}\n")
+    print(f"Prompt: {args.prompt}")
+    print(f"Max retries per request: {args.max_retries}\n")
     
     # Run benchmark
-    results = run_benchmark(args.prompt, models, args.api_key, args.max_workers)
+    results = run_benchmark(args.prompt, models, args.api_key, args.max_workers, args.max_retries)
     
     # Save results based on format
     if args.format == "csv":
