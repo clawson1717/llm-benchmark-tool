@@ -13,7 +13,7 @@ import csv
 import argparse
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from html import escape
 
 
@@ -523,6 +523,492 @@ def generate_console(data: dict, include_side_by_side: bool = False) -> str:
     return "\n".join(lines)
 
 
+# =============================================================================
+# HISTORICAL COMPARISON FEATURE
+# =============================================================================
+
+def load_multiple_results(filepaths: List[str]) -> List[dict]:
+    """Load multiple benchmark result files."""
+    results = []
+    for filepath in filepaths:
+        try:
+            if filepath.lower().endswith('.csv'):
+                data = load_results_csv(filepath)
+            else:
+                data = load_results(filepath)
+            data['source_file'] = filepath
+            results.append(data)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"Warning: Could not load {filepath}: {e}")
+    return results
+
+
+def extract_run_label(filepath: str, index: int) -> str:
+    """Extract a short label for a run from its filepath."""
+    filename = Path(filepath).name
+    # Try to extract date from benchmark_YYYYMMDD_HHMMSS.json
+    if filename.startswith('benchmark_') and len(filename) >= 22:
+        try:
+            date_str = filename[10:18]  # YYYYMMDD
+            time_str = filename[19:25]  # HHMMSS
+            return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+        except:
+            pass
+    return f"Run {index + 1}"
+
+
+def build_comparison_data(results_list: List[dict]) -> Tuple[Dict[str, List[dict]], List[str]]:
+    """
+    Build comparison data structure.
+    Returns: (model_data dict mapping model names to list of results per run, run_labels list)
+    """
+    run_labels = []
+    all_models = set()
+    
+    # Collect all models and run labels
+    for i, data in enumerate(results_list):
+        run_labels.append(extract_run_label(data.get('source_file', ''), i))
+        for result in data.get('results', []):
+            all_models.add(result['model'])
+    
+    # Build model -> list of results (one per run) mapping
+    model_data = {model: [] for model in all_models}
+    
+    for data in results_list:
+        run_results = {r['model']: r for r in data.get('results', [])}
+        for model in all_models:
+            if model in run_results:
+                model_data[model].append(run_results[model])
+            else:
+                # Model not present in this run
+                model_data[model].append(None)
+    
+    return model_data, run_labels
+
+
+def calculate_trend(current: float, previous: float) -> Tuple[str, str, float]:
+    """
+    Calculate trend indicator and percentage change.
+    Returns: (arrow, direction_text, percentage)
+    """
+    if previous == 0:
+        return ("→", "same", 0.0)
+    
+    change = current - previous
+    pct_change = (change / previous) * 100
+    
+    if change < 0:
+        return ("↓", "faster", abs(pct_change))  # Lower time is better
+    elif change > 0:
+        return ("↑", "slower", abs(pct_change))  # Higher time is worse
+    else:
+        return ("→", "same", 0.0)
+
+
+def calculate_success_trend(current: bool, previous: bool) -> Tuple[str, str]:
+    """Calculate success rate trend indicator."""
+    if current and not previous:
+        return ("↑", "improved")
+    elif not current and previous:
+        return ("↓", "degraded")
+    elif current and previous:
+        return ("→", "stable")
+    else:
+        return ("→", "still failing")
+
+
+def format_comparison_markdown(model_data: Dict[str, List[dict]], run_labels: List[str]) -> str:
+    """Generate a markdown comparison table."""
+    lines = [
+        "# LLM Benchmark Historical Comparison\n",
+        "## Response Time Comparison\n",
+    ]
+    
+    # Build header
+    header = "| Model | Avg |"
+    separator = "|-------|-----|"
+    for label in run_labels:
+        header += f" {label} |"
+        separator += "---------|"
+    
+    # Add trend columns between runs
+    if len(run_labels) > 1:
+        for i in range(len(run_labels) - 1):
+            header += f" Trend{i+1} |"
+            separator += "---------|"
+    
+    lines.append(header)
+    lines.append(separator)
+    
+    # Build rows for each model
+    for model in sorted(model_data.keys()):
+        results = model_data[model]
+        
+        # Calculate average response time across successful runs
+        successful_times = [r['response_time'] for r in results if r and r['success']]
+        avg_time = sum(successful_times) / len(successful_times) if successful_times else 0
+        
+        row = f"| {model} | {avg_time:.2f}s |"
+        
+        # Add response times for each run
+        for result in results:
+            if result is None:
+                row += " N/A |"
+            elif result['success']:
+                row += f" {result['response_time']:.2f}s |"
+            else:
+                row += " ❌ |"
+        
+        # Add trend indicators
+        for i in range(len(results) - 1):
+            curr = results[i]
+            next_res = results[i + 1]
+            
+            if curr is None or next_res is None:
+                row += " N/A |"
+            elif not curr['success'] or not next_res['success']:
+                # Show success status trend if either failed
+                curr_success = curr['success'] if curr else False
+                next_success = next_res['success'] if next_res else False
+                arrow, status = calculate_success_trend(next_success, curr_success)
+                row += f" {arrow} {status} |"
+            else:
+                arrow, direction, pct = calculate_trend(next_res['response_time'], curr['response_time'])
+                row += f" {arrow} {pct:.1f}% |"
+        
+        lines.append(row)
+    
+    lines.append("\n### Legend")
+    lines.append("- **↓** = Faster response time (improvement)")
+    lines.append("- **↑** = Slower response time (regression)")
+    lines.append("- **→** = No change")
+    lines.append("- **Avg** = Average response time across all successful runs")
+    
+    # Add success rate comparison
+    lines.append("\n## Success Rate Comparison\n")
+    
+    header = "| Model | Overall |"
+    separator = "|-------|---------|"
+    for label in run_labels:
+        header += f" {label} |"
+        separator += "-------|"
+    
+    lines.append(header)
+    lines.append(separator)
+    
+    for model in sorted(model_data.keys()):
+        results = model_data[model]
+        successful = sum(1 for r in results if r and r['success'])
+        overall_rate = (successful / len(results)) * 100 if results else 0
+        
+        row = f"| {model} | {overall_rate:.0f}% |"
+        
+        for result in results:
+            if result is None:
+                row += " N/A |"
+            elif result['success']:
+                row += " ✅ |"
+            else:
+                row += " ❌ |"
+        
+        lines.append(row)
+    
+    return "\n".join(lines)
+
+
+def format_comparison_html(model_data: Dict[str, List[dict]], run_labels: List[str]) -> str:
+    """Generate an HTML comparison report."""
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Benchmark Historical Comparison</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+            color: #333;
+        }
+        h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+        h2 { color: #34495e; margin-top: 30px; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            font-size: 0.9em;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        th {
+            background: #3498db;
+            color: white;
+            font-weight: 600;
+        }
+        tr:hover { background: #f5f5f5; }
+        .trend-up { color: #e74c3c; font-weight: bold; }
+        .trend-down { color: #27ae60; font-weight: bold; }
+        .trend-same { color: #7f8c8d; }
+        .success { color: #27ae60; }
+        .failed { color: #e74c3c; }
+        .legend {
+            background: #f8f9fa;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .avg-cell { font-weight: bold; background: #ecf0f1; }
+    </style>
+</head>
+<body>
+    <h1>📊 LLM Benchmark Historical Comparison</h1>
+    
+    <h2>Response Time Comparison</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Model</th>
+                <th>Avg</th>
+"""
+    
+    for label in run_labels:
+        html += f"                <th>{label}</th>\n"
+    
+    if len(run_labels) > 1:
+        for i in range(len(run_labels) - 1):
+            html += f"                <th>Trend {i+1}</th>\n"
+    
+    html += """            </tr>
+        </thead>
+        <tbody>
+"""
+    
+    for model in sorted(model_data.keys()):
+        results = model_data[model]
+        
+        successful_times = [r['response_time'] for r in results if r and r['success']]
+        avg_time = sum(successful_times) / len(successful_times) if successful_times else 0
+        
+        html += f"            <tr>\n"
+        html += f"                <td><strong>{escape(model)}</strong></td>\n"
+        html += f"                <td class='avg-cell'>{avg_time:.2f}s</td>\n"
+        
+        for result in results:
+            if result is None:
+                html += "                <td>N/A</td>\n"
+            elif result['success']:
+                html += f"                <td>{result['response_time']:.2f}s</td>\n"
+            else:
+                html += "                <td class='failed'>❌ Failed</td>\n"
+        
+        for i in range(len(results) - 1):
+            curr = results[i]
+            next_res = results[i + 1]
+            
+            if curr is None or next_res is None:
+                html += "                <td>N/A</td>\n"
+            elif not curr['success'] or not next_res['success']:
+                curr_success = curr['success'] if curr else False
+                next_success = next_res['success'] if next_res else False
+                arrow, status = calculate_success_trend(next_success, curr_success)
+                if status == "improved":
+                    html += f"                <td class='trend-down'>{arrow} {status}</td>\n"
+                elif status == "degraded":
+                    html += f"                <td class='trend-up'>{arrow} {status}</td>\n"
+                else:
+                    html += f"                <td class='trend-same'>{arrow} {status}</td>\n"
+            else:
+                arrow, direction, pct = calculate_trend(next_res['response_time'], curr['response_time'])
+                if direction == "faster":
+                    html += f"                <td class='trend-down'>{arrow} {pct:.1f}%</td>\n"
+                elif direction == "slower":
+                    html += f"                <td class='trend-up'>{arrow} {pct:.1f}%</td>\n"
+                else:
+                    html += f"                <td class='trend-same'>{arrow} 0%</td>\n"
+        
+        html += "            </tr>\n"
+    
+    html += """        </tbody>
+    </table>
+    
+    <div class="legend">
+        <strong>Legend:</strong><br>
+        <span class="trend-down">↓ Green</span> = Faster/better (improvement)<br>
+        <span class="trend-up">↑ Red</span> = Slower/worse (regression)<br>
+        <span class="trend-same">→ Gray</span> = No change<br>
+        <strong>Avg</strong> = Average response time across all successful runs
+    </div>
+    
+    <h2>Success Rate Comparison</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Model</th>
+                <th>Overall</th>
+"""
+    
+    for label in run_labels:
+        html += f"                <th>{label}</th>\n"
+    
+    html += """            </tr>
+        </thead>
+        <tbody>
+"""
+    
+    for model in sorted(model_data.keys()):
+        results = model_data[model]
+        successful = sum(1 for r in results if r and r['success'])
+        overall_rate = (successful / len(results)) * 100 if results else 0
+        
+        html += f"            <tr>\n"
+        html += f"                <td><strong>{escape(model)}</strong></td>\n"
+        html += f"                <td class='avg-cell'>{overall_rate:.0f}%</td>\n"
+        
+        for result in results:
+            if result is None:
+                html += "                <td>N/A</td>\n"
+            elif result['success']:
+                html += "                <td class='success'>✅ Success</td>\n"
+            else:
+                html += "                <td class='failed'>❌ Failed</td>\n"
+        
+        html += "            </tr>\n"
+    
+    html += """        </tbody>
+    </table>
+</body>
+</html>
+"""
+    
+    return html
+
+
+def format_comparison_console(model_data: Dict[str, List[dict]], run_labels: List[str]) -> str:
+    """Generate a console-formatted comparison report."""
+    lines = [
+        "=" * 100,
+        "  LLM BENCHMARK HISTORICAL COMPARISON",
+        "=" * 100,
+        "",
+        "  RESPONSE TIME COMPARISON",
+        "  " + "-" * 98,
+    ]
+    
+    # Calculate column widths
+    model_width = max(len(m) for m in model_data.keys()) + 2
+    model_width = max(model_width, 20)
+    
+    # Header
+    header = f"  {'Model':<{model_width}} {'Avg':<8}"
+    for label in run_labels:
+        header += f" {label:<12}"
+    if len(run_labels) > 1:
+        for i in range(len(run_labels) - 1):
+            header += f" Trend{i+1:<8}"
+    lines.append(header)
+    lines.append("  " + "-" * 98)
+    
+    # Rows
+    for model in sorted(model_data.keys()):
+        results = model_data[model]
+        
+        successful_times = [r['response_time'] for r in results if r and r['success']]
+        avg_time = sum(successful_times) / len(successful_times) if successful_times else 0
+        
+        row = f"  {model:<{model_width}} {avg_time:<8.2f}"
+        
+        for result in results:
+            if result is None:
+                row += f" {'N/A':<12}"
+            elif result['success']:
+                row += f" {result['response_time']:<11.2f}s"
+            else:
+                row += f" {'❌':<12}"
+        
+        for i in range(len(results) - 1):
+            curr = results[i]
+            next_res = results[i + 1]
+            
+            if curr is None or next_res is None:
+                row += f" {'N/A':<10}"
+            elif not curr['success'] or not next_res['success']:
+                curr_success = curr['success'] if curr else False
+                next_success = next_res['success'] if next_res else False
+                arrow, status = calculate_success_trend(next_success, curr_success)
+                status_short = status[:7]
+                row += f" {arrow} {status_short:<7}"
+            else:
+                arrow, direction, pct = calculate_trend(next_res['response_time'], curr['response_time'])
+                row += f" {arrow} {pct:<7.1f}%"
+        
+        lines.append(row)
+    
+    lines.extend([
+        "  " + "-" * 98,
+        "",
+        "  Legend: ↓ = Faster (better), ↑ = Slower (worse), → = No change",
+        "",
+        "  SUCCESS RATE COMPARISON",
+        "  " + "-" * 98,
+    ])
+    
+    # Success rate header
+    header = f"  {'Model':<{model_width}} {'Overall':<8}"
+    for label in run_labels:
+        header += f" {label:<12}"
+    lines.append(header)
+    lines.append("  " + "-" * 98)
+    
+    for model in sorted(model_data.keys()):
+        results = model_data[model]
+        successful = sum(1 for r in results if r and r['success'])
+        overall_rate = (successful / len(results)) * 100 if results else 0
+        
+        row = f"  {model:<{model_width}} {overall_rate:<7.0f}%"
+        
+        for result in results:
+            if result is None:
+                row += f" {'N/A':<12}"
+            elif result['success']:
+                row += f" {'✅':<12}"
+            else:
+                row += f" {'❌':<12}"
+        
+        lines.append(row)
+    
+    lines.extend([
+        "  " + "-" * 98,
+        "",
+        "=" * 100,
+    ])
+    
+    return "\n".join(lines)
+
+
+def generate_comparison_report(results_list: List[dict], format_type: str = "markdown") -> str:
+    """Generate a historical comparison report from multiple benchmark runs."""
+    if len(results_list) < 2:
+        return "Error: Need at least 2 result files to compare."
+    
+    model_data, run_labels = build_comparison_data(results_list)
+    
+    if format_type == "markdown":
+        return format_comparison_markdown(model_data, run_labels)
+    elif format_type == "html":
+        return format_comparison_html(model_data, run_labels)
+    else:  # console
+        return format_comparison_console(model_data, run_labels)
+
+
 def save_report(content: str, output_dir: str, format_type: str) -> str:
     """Save the report to the specified output directory."""
     output_path = Path(output_dir)
@@ -545,6 +1031,7 @@ def main():
     )
     parser.add_argument(
         "results_file",
+        nargs="?",
         help="Path to the JSON results file from benchmark.py"
     )
     parser.add_argument(
@@ -568,8 +1055,47 @@ def main():
         "-o",
         help="Specific output file path (overrides default naming)"
     )
+    parser.add_argument(
+        "--compare",
+        nargs="+",
+        metavar="FILE",
+        help="Compare multiple benchmark result files (e.g., --compare run1.json run2.json run3.json)"
+    )
     
     args = parser.parse_args()
+    
+    # Handle comparison mode
+    if args.compare:
+        if len(args.compare) < 2:
+            print("Error: --compare requires at least 2 result files.")
+            sys.exit(1)
+        
+        results_list = load_multiple_results(args.compare)
+        
+        if len(results_list) < 2:
+            print("Error: Could not load at least 2 valid result files for comparison.")
+            sys.exit(1)
+        
+        report = generate_comparison_report(results_list, args.format)
+        
+        if args.format == "console":
+            print(report)
+        else:
+            if args.output:
+                output_path = Path(args.output)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_path, 'w') as f:
+                    f.write(report)
+                print(f"Comparison report saved to: {output_path}")
+            else:
+                output_file = save_report(report, args.output_dir, args.format)
+                print(f"Comparison report saved to: {output_file}")
+        return
+    
+    # Standard single-file mode
+    if not args.results_file:
+        parser.print_help()
+        sys.exit(1)
     
     # Load results (auto-detect format based on file extension)
     try:

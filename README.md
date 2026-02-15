@@ -124,6 +124,52 @@ All reports include:
 - **Results Table** - Model responses with status, timing, and token counts
 - **Failed Requests** - Details of any failed API calls (if applicable)
 
+## Historical Comparison
+
+Track model performance over time by comparing multiple benchmark runs.
+
+### Comparing Multiple Runs
+
+Use the `--compare` option to analyze trends across different benchmark runs:
+
+```bash
+# Compare 3 different runs
+python src/view_results.py --compare results/run1.json results/run2.json results/run3.json
+
+# Generate HTML comparison report
+python src/view_results.py --compare results/*.json --format html --output comparison.html
+
+# View comparison in console
+python src/view_results.py --compare results/run1.json results/run2.json --format console
+```
+
+### Comparison Features
+
+The historical comparison report shows:
+
+- **Response Time Trends**: Track how model response times change between runs
+  - **↓** = Faster response time (improvement)
+  - **↑** = Slower response time (regression)
+  - **→** = No change
+  - Percentage changes shown for each transition
+
+- **Success Rate Tracking**: Monitor model reliability over time
+  - Overall success rate across all runs
+  - Per-run success/failure indicators
+  - Visual indicators for improved/degraded reliability
+
+- **Average Performance**: Average response time across all successful runs for each model
+
+### Example Output
+
+```
+Model                     Avg      Run 1        Run 2        Run 3        Trend1      Trend2
+------------------------------------------------------------------------------------------
+gpt-4o                    1.09s    1.23s        1.05s        0.98s        ↓ 14.6%     ↓ 6.7%
+claude-3-opus             2.30s    2.45s        2.30s        2.15s        ↓ 6.1%      ↓ 6.5%
+gemini-pro                1.77s    1.89s        ❌            1.65s        ↓ degraded  ↑ improved
+```
+
 ## Configuration
 
 Edit `config/models.json` to customize which models to benchmark. The default configuration includes popular models like GPT-4, Claude, and Llama.
