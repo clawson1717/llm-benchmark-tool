@@ -7,6 +7,7 @@ A Python tool for benchmarking multiple Large Language Models (LLMs) simultaneou
 - **Parallel Execution**: Send prompts to multiple models concurrently for faster benchmarking
 - **Multiple Model Support**: Compare responses from different LLM providers and models
 - **Structured Output**: Results are saved as JSON with metadata including response times
+- **CSV Export**: Export benchmark results as CSV for easy analysis in Excel/Google Sheets
 - **Configurable**: Easy-to-use configuration files for defining which models to test
 - **OpenRouter Integration**: Access to 200+ models through a single API
 
@@ -38,6 +39,40 @@ A Python tool for benchmarking multiple Large Language Models (LLMs) simultaneou
    ```bash
    python src/view_results.py results/benchmark_20240115_143022.json
    ```
+
+## CSV Export
+
+The benchmark tool supports exporting results directly to CSV format for easy analysis in spreadsheet applications.
+
+### Export as CSV
+
+```bash
+# Run benchmark and save results as CSV
+python src/benchmark.py "Explain quantum computing in simple terms" --format csv
+```
+
+### CSV Output Format
+
+The CSV file includes the following columns:
+- **model** - The model ID (e.g., `openai/gpt-4o`)
+- **status** - `success` or `failed`
+- **response_time** - Response time in seconds
+- **tokens_used** - Total tokens consumed (0 if failed)
+- **response_preview** - First 200 characters of the response (or error message if failed)
+
+### Viewing CSV Results
+
+The `view_results.py` script automatically detects CSV files and can generate reports from them:
+
+```bash
+# Generate markdown report from CSV
+python src/view_results.py results/benchmark_20240115_143022.csv
+
+# Generate HTML report from CSV
+python src/view_results.py results/benchmark_20240115_143022.csv --format html
+```
+
+**Note**: When loading from CSV, the original prompt is not available and will display as "Loaded from CSV (prompt not available)".
 
 ## Project Structure
 

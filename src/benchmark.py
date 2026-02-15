@@ -8,6 +8,7 @@ A tool for parallel LLM prompt benchmarking across multiple models via OpenRoute
 import os
 import sys
 import json
+import csv
 import time
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -166,6 +167,39 @@ def save_results(results: dict, output_dir: str = "results") -> str:
     return str(filepath)
 
 
+def save_results_csv(results: dict, output_dir: str = "results") -> str:
+    """Save benchmark results to a CSV file."""
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"benchmark_{timestamp}.csv"
+    filepath = output_path / filename
+    
+    with open(filepath, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        # Write header row
+        writer.writerow(['model', 'status', 'response_time', 'tokens_used', 'response_preview'])
+        # Write data rows
+        for result in results['results']:
+            status = 'success' if result['success'] else 'failed'
+            response_preview = ''
+            if result['success'] and result['response']:
+                response_preview = result['response'][:200].replace('\n', ' ').replace('\r', '')
+            elif not result['success'] and result['error']:
+                response_preview = result['error'][:200].replace('\n', ' ').replace('\r', '')
+            
+            writer.writerow([
+                result['model'],
+                status,
+                result['response_time'],
+                result.get('tokens_used', 0),
+                response_preview
+            ])
+    
+    return str(filepath)
+
+
 def print_summary(results: dict):
     """Print a formatted summary of benchmark results."""
     print("\n" + "=" * 60)
@@ -219,6 +253,12 @@ def main():
         default=os.environ.get("OPENROUTER_API_KEY"),
         help="OpenRouter API key (or set OPENROUTER_API_KEY env var)"
     )
+    parser.add_argument(
+        "--format",
+        choices=["json", "csv"],
+        default="json",
+        help="Output format (default: json)"
+    )
     
     args = parser.parse_args()
     
@@ -247,8 +287,11 @@ def main():
     # Run benchmark
     results = run_benchmark(args.prompt, models, args.api_key, args.max_workers)
     
-    # Save results
-    output_file = save_results(results, args.output_dir)
+    # Save results based on format
+    if args.format == "csv":
+        output_file = save_results_csv(results, args.output_dir)
+    else:
+        output_file = save_results(results, args.output_dir)
     print(f"\nResults saved to: {output_file}")
     
     # Print summary

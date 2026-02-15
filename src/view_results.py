@@ -9,6 +9,7 @@ Supports markdown, HTML, and console output formats.
 import os
 import sys
 import json
+import csv
 import argparse
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,40 @@ def load_results(filepath: str) -> dict:
     """Load benchmark results from a JSON file."""
     with open(filepath, 'r') as f:
         return json.load(f)
+
+
+def load_results_csv(filepath: str) -> dict:
+    """Load benchmark results from a CSV file."""
+    results = []
+    with open(filepath, 'r', newline='', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            result = {
+                'model': row['model'],
+                'success': row['status'] == 'success',
+                'response_time': float(row['response_time']),
+                'tokens_used': int(row['tokens_used']) if row['tokens_used'] else 0,
+                'response': row['response_preview'] if row['status'] == 'success' else None,
+                'error': row['response_preview'] if row['status'] != 'success' else None
+            }
+            results.append(result)
+    
+    # Extract timestamp from filename if possible
+    filename = Path(filepath).name
+    timestamp = "Unknown"
+    if filename.startswith('benchmark_') and len(filename) >= 22:
+        try:
+            ts_str = filename[10:25]  # Extract YYYYMMDD_HHMMSS
+            timestamp = datetime.strptime(ts_str, "%Y%m%d_%H%M%S").isoformat()
+        except ValueError:
+            pass
+    
+    return {
+        'prompt': 'Loaded from CSV (prompt not available)',
+        'timestamp': timestamp,
+        'model_count': len(results),
+        'results': results
+    }
 
 
 def calculate_statistics(results: List[dict]) -> dict:
@@ -536,9 +571,12 @@ def main():
     
     args = parser.parse_args()
     
-    # Load results
+    # Load results (auto-detect format based on file extension)
     try:
-        data = load_results(args.results_file)
+        if args.results_file.lower().endswith('.csv'):
+            data = load_results_csv(args.results_file)
+        else:
+            data = load_results(args.results_file)
     except FileNotFoundError:
         print(f"Error: Results file not found: {args.results_file}")
         sys.exit(1)
