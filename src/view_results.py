@@ -1,0 +1,573 @@
+#!/usr/bin/env python3
+"""
+LLM Benchmark Results Viewer
+
+A tool for generating formatted reports from benchmark JSON output.
+Supports markdown, HTML, and console output formats.
+"""
+
+import os
+import sys
+import json
+import argparse
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
+from html import escape
+
+
+def load_results(filepath: str) -> dict:
+    """Load benchmark results from a JSON file."""
+    with open(filepath, 'r') as f:
+        return json.load(f)
+
+
+def calculate_statistics(results: List[dict]) -> dict:
+    """Calculate summary statistics from benchmark results."""
+    total_models = len(results)
+    successful = [r for r in results if r["success"]]
+    failed = [r for r in results if not r["success"]]
+    
+    success_rate = (len(successful) / total_models * 100) if total_models > 0 else 0
+    
+    if successful:
+        response_times = [r["response_time"] for r in successful]
+        avg_response_time = sum(response_times) / len(response_times)
+        fastest = min(successful, key=lambda x: x["response_time"])
+        slowest = max(successful, key=lambda x: x["response_time"])
+        total_tokens = sum(r["tokens_used"] for r in successful)
+    else:
+        avg_response_time = 0
+        fastest = None
+        slowest = None
+        total_tokens = 0
+    
+    return {
+        "total_models": total_models,
+        "successful_count": len(successful),
+        "failed_count": len(failed),
+        "success_rate": success_rate,
+        "avg_response_time": avg_response_time,
+        "fastest": fastest,
+        "slowest": slowest,
+        "total_tokens": total_tokens
+    }
+
+
+def format_markdown_table(results: List[dict]) -> str:
+    """Generate a markdown table of model responses."""
+    lines = [
+        "| Model | Status | Response Time | Tokens | Preview |",
+        "|-------|--------|---------------|--------|---------|"
+    ]
+    
+    for result in results:
+        status = "✅ Success" if result["success"] else "❌ Failed"
+        time_str = f"{result['response_time']:.2f}s"
+        tokens = str(result.get("tokens_used", 0)) if result["success"] else "N/A"
+        
+        if result["success"] and result["response"]:
+            preview = result["response"][:80].replace("\n", " ").replace("|", "\\|")
+            if len(result["response"]) > 80:
+                preview += "..."
+        else:
+            preview = result.get("error", "No response")[:60].replace("\n", " ").replace("|", "\\|")
+        
+        lines.append(f"| {result['model']} | {status} | {time_str} | {tokens} | {preview} |")
+    
+    return "\n".join(lines)
+
+
+def format_side_by_side(results: List[dict]) -> str:
+    """Generate a side-by-side comparison view of responses."""
+    successful = [r for r in results if r["success"]]
+    
+    if not successful:
+        return "*No successful responses to compare.*"
+    
+    lines = ["## Side-by-Side Response Comparison\n"]
+    
+    for result in successful:
+        lines.append(f"### {result['model']}")
+        lines.append(f"**Response Time:** {result['response_time']:.2f}s | **Tokens:** {result.get('tokens_used', 'N/A')}\n")
+        lines.append("```")
+        lines.append(result.get("response", "No response"))
+        lines.append("```\n")
+    
+    return "\n".join(lines)
+
+
+def generate_markdown(data: dict, include_side_by_side: bool = False) -> str:
+    """Generate a complete markdown report from benchmark data."""
+    prompt = data.get("prompt", "N/A")
+    timestamp = data.get("timestamp", "N/A")
+    results = data.get("results", [])
+    
+    stats = calculate_statistics(results)
+    
+    lines = [
+        "# LLM Benchmark Results\n",
+        "## Benchmark Overview\n",
+        f"**Timestamp:** {timestamp}\n",
+        f"**Models Tested:** {stats['total_models']}\n",
+        "### Prompt Used",
+        "```",
+        prompt,
+        "```\n",
+        "## Summary Statistics\n",
+        f"- **Success Rate:** {stats['success_rate']:.1f}% ({stats['successful_count']}/{stats['total_models']})",
+        f"- **Average Response Time:** {stats['avg_response_time']:.2f}s",
+        f"- **Total Tokens Used:** {stats['total_tokens']:,}",
+    ]
+    
+    if stats["fastest"]:
+        lines.append(f"- **Fastest Model:** {stats['fastest']['model']} ({stats['fastest']['response_time']:.2f}s)")
+    
+    if stats["slowest"]:
+        lines.append(f"- **Slowest Model:** {stats['slowest']['model']} ({stats['slowest']['response_time']:.2f}s)")
+    
+    lines.append("\n## Results Table\n")
+    lines.append(format_markdown_table(results))
+    
+    if include_side_by_side:
+        lines.append("\n")
+        lines.append(format_side_by_side(results))
+    
+    if stats["failed_count"] > 0:
+        lines.append("\n## Failed Requests\n")
+        for result in results:
+            if not result["success"]:
+                lines.append(f"- **{result['model']}:** {result.get('error', 'Unknown error')}")
+    
+    return "\n".join(lines)
+
+
+def generate_html(data: dict, include_side_by_side: bool = False) -> str:
+    """Generate an HTML report from benchmark data."""
+    prompt = escape(data.get("prompt", "N/A"))
+    timestamp = escape(str(data.get("timestamp", "N/A")))
+    results = data.get("results", [])
+    
+    stats = calculate_statistics(results)
+    
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Benchmark Results</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+            color: #333;
+        }}
+        h1 {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }}
+        h2 {{ color: #34495e; margin-top: 30px; }}
+        h3 {{ color: #555; }}
+        .prompt-box {{
+            background: #f8f9fa;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+        }}
+        .stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }}
+        .stat-card {{
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        .stat-label {{ font-size: 0.9em; color: #666; margin-bottom: 5px; }}
+        .stat-value {{ font-size: 1.5em; font-weight: bold; color: #2c3e50; }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: #fff;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }}
+        th, td {{
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }}
+        th {{
+            background: #3498db;
+            color: white;
+            font-weight: 600;
+        }}
+        tr:hover {{ background: #f5f5f5; }}
+        .status-success {{ color: #27ae60; font-weight: bold; }}
+        .status-failed {{ color: #e74c3c; font-weight: bold; }}
+        .response-preview {{
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        .comparison-section {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }}
+        .response-card {{
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        .response-header {{
+            background: #f8f9fa;
+            padding: 10px;
+            margin: -20px -20px 15px -20px;
+            border-radius: 8px 8px 0 0;
+            border-bottom: 1px solid #e0e0e0;
+        }}
+        .response-content {{
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            max-height: 400px;
+            overflow-y: auto;
+        }}
+        .error-section {{
+            background: #fdf2f2;
+            border: 1px solid #fca5a5;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+        }}
+        .error-item {{ color: #c53030; margin: 5px 0; }}
+    </style>
+</head>
+<body>
+    <h1>🚀 LLM Benchmark Results</h1>
+    
+    <h2>Benchmark Overview</h2>
+    <p><strong>Timestamp:</strong> {timestamp}</p>
+    <p><strong>Models Tested:</strong> {stats['total_models']}</p>
+    
+    <h3>Prompt Used</h3>
+    <div class="prompt-box">{prompt}</div>
+    
+    <h2>Summary Statistics</h2>
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Success Rate</div>
+            <div class="stat-value">{stats['success_rate']:.1f}%</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Successful / Total</div>
+            <div class="stat-value">{stats['successful_count']} / {stats['total_models']}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Avg Response Time</div>
+            <div class="stat-value">{stats['avg_response_time']:.2f}s</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total Tokens Used</div>
+            <div class="stat-value">{stats['total_tokens']:,}</div>
+        </div>
+"""
+    
+    if stats["fastest"]:
+        html += f"""
+        <div class="stat-card">
+            <div class="stat-label">Fastest Model</div>
+            <div class="stat-value">{escape(stats['fastest']['model'])}</div>
+            <div>{stats['fastest']['response_time']:.2f}s</div>
+        </div>
+"""
+    
+    html += """
+    </div>
+    
+    <h2>Results Table</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Model</th>
+                <th>Status</th>
+                <th>Response Time</th>
+                <th>Tokens</th>
+                <th>Preview</th>
+            </tr>
+        </thead>
+        <tbody>
+"""
+    
+    for result in results:
+        status_class = "status-success" if result["success"] else "status-failed"
+        status_text = "✓ Success" if result["success"] else "✗ Failed"
+        time_str = f"{result['response_time']:.2f}s"
+        tokens = str(result.get("tokens_used", "N/A")) if result["success"] else "N/A"
+        
+        if result["success"] and result["response"]:
+            preview = escape(result["response"][:80])
+        else:
+            preview = escape(result.get("error", "No response")[:60])
+        
+        html += f"""
+            <tr>
+                <td>{escape(result['model'])}</td>
+                <td class="{status_class}">{status_text}</td>
+                <td>{time_str}</td>
+                <td>{tokens}</td>
+                <td class="response-preview">{preview}</td>
+            </tr>
+"""
+    
+    html += """
+        </tbody>
+    </table>
+"""
+    
+    if include_side_by_side and stats["successful_count"] > 0:
+        html += """
+    <h2>Side-by-Side Response Comparison</h2>
+    <div class="comparison-section">
+"""
+        for result in results:
+            if result["success"]:
+                response_text = escape(result.get("response", "No response"))
+                html += f"""
+        <div class="response-card">
+            <div class="response-header">
+                <strong>{escape(result['model'])}</strong>
+                <span style="float: right;">{result['response_time']:.2f}s | {result.get('tokens_used', 'N/A')} tokens</span>
+            </div>
+            <div class="response-content">{response_text}</div>
+        </div>
+"""
+        html += """
+    </div>
+"""
+    
+    if stats["failed_count"] > 0:
+        html += """
+    <div class="error-section">
+        <h2>Failed Requests</h2>
+"""
+        for result in results:
+            if not result["success"]:
+                error_msg = escape(result.get("error", "Unknown error"))
+                html += f"""
+        <div class="error-item">
+            <strong>{escape(result['model'])}:</strong> {error_msg}
+        </div>
+"""
+        html += """
+    </div>
+"""
+    
+    html += """
+</body>
+</html>
+"""
+    
+    return html
+
+
+def generate_console(data: dict, include_side_by_side: bool = False) -> str:
+    """Generate a pretty-printed console report from benchmark data."""
+    prompt = data.get("prompt", "N/A")
+    timestamp = data.get("timestamp", "N/A")
+    results = data.get("results", [])
+    
+    stats = calculate_statistics(results)
+    
+    lines = [
+        "=" * 70,
+        "  LLM BENCHMARK RESULTS",
+        "=" * 70,
+        "",
+        f"  Timestamp: {timestamp}",
+        f"  Models Tested: {stats['total_models']}",
+        "",
+        "  PROMPT:",
+        "  " + "-" * 66,
+    ]
+    
+    # Wrap prompt lines
+    prompt_lines = prompt.split("\n")
+    for pl in prompt_lines:
+        while pl:
+            chunk = pl[:66]
+            pl = pl[66:]
+            lines.append(f"  {chunk}")
+    
+    lines.extend([
+        "  " + "-" * 66,
+        "",
+        "  SUMMARY STATISTICS:",
+        f"    Success Rate:      {stats['success_rate']:.1f}% ({stats['successful_count']}/{stats['total_models']})",
+        f"    Avg Response Time: {stats['avg_response_time']:.2f}s",
+        f"    Total Tokens Used: {stats['total_tokens']:,}",
+    ])
+    
+    if stats["fastest"]:
+        lines.append(f"    Fastest Model:     {stats['fastest']['model']} ({stats['fastest']['response_time']:.2f}s)")
+    
+    if stats["slowest"]:
+        lines.append(f"    Slowest Model:     {stats['slowest']['model']} ({stats['slowest']['response_time']:.2f}s)")
+    
+    lines.extend([
+        "",
+        "  RESULTS TABLE:",
+        "  " + "-" * 68,
+        f"  {'Model':<35} {'Status':<12} {'Time':<10} {'Tokens':<10}",
+        "  " + "-" * 68,
+    ])
+    
+    for result in results:
+        status = "✓ Success" if result["success"] else "✗ Failed"
+        time_str = f"{result['response_time']:.2f}s"
+        tokens = str(result.get("tokens_used", "N/A")) if result["success"] else "N/A"
+        model_name = result['model'][:34]
+        lines.append(f"  {model_name:<35} {status:<12} {time_str:<10} {tokens:<10}")
+    
+    lines.append("  " + "-" * 68)
+    
+    if include_side_by_side:
+        lines.extend([
+            "",
+            "  SIDE-BY-SIDE COMPARISON:",
+            "  " + "=" * 68,
+        ])
+        
+        for result in results:
+            if result["success"]:
+                lines.extend([
+                    "",
+                    f"  MODEL: {result['model']}",
+                    f"  Time: {result['response_time']:.2f}s | Tokens: {result.get('tokens_used', 'N/A')}",
+                    "  " + "-" * 68,
+                ])
+                response_lines = result.get("response", "No response").split("\n")
+                for rl in response_lines[:20]:  # Limit to 20 lines per response
+                    wrapped = rl[:66]
+                    lines.append(f"  {wrapped}")
+                if len(response_lines) > 20:
+                    lines.append("  ... (truncated)")
+                lines.append("  " + "-" * 68)
+    
+    if stats["failed_count"] > 0:
+        lines.extend([
+            "",
+            "  FAILED REQUESTS:",
+            "  " + "-" * 68,
+        ])
+        for result in results:
+            if not result["success"]:
+                error = result.get("error", "Unknown error")[:60]
+                lines.append(f"    {result['model']}: {error}")
+    
+    lines.extend([
+        "",
+        "=" * 70,
+    ])
+    
+    return "\n".join(lines)
+
+
+def save_report(content: str, output_dir: str, format_type: str) -> str:
+    """Save the report to the specified output directory."""
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    extension = "md" if format_type == "markdown" else format_type
+    filename = f"benchmark_report_{timestamp}.{extension}"
+    filepath = output_path / filename
+    
+    with open(filepath, 'w') as f:
+        f.write(content)
+    
+    return str(filepath)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate formatted reports from LLM benchmark results"
+    )
+    parser.add_argument(
+        "results_file",
+        help="Path to the JSON results file from benchmark.py"
+    )
+    parser.add_argument(
+        "--format",
+        choices=["markdown", "html", "console"],
+        default="markdown",
+        help="Output format (default: markdown)"
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="results",
+        help="Directory to save the report (default: results)"
+    )
+    parser.add_argument(
+        "--side-by-side",
+        action="store_true",
+        help="Include side-by-side comparison view"
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        help="Specific output file path (overrides default naming)"
+    )
+    
+    args = parser.parse_args()
+    
+    # Load results
+    try:
+        data = load_results(args.results_file)
+    except FileNotFoundError:
+        print(f"Error: Results file not found: {args.results_file}")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in results file: {e}")
+        sys.exit(1)
+    
+    # Generate report based on format
+    if args.format == "markdown":
+        report = generate_markdown(data, args.side_by_side)
+    elif args.format == "html":
+        report = generate_html(data, args.side_by_side)
+    else:  # console
+        report = generate_console(data, args.side_by_side)
+    
+    # Output the report
+    if args.format == "console":
+        print(report)
+    else:
+        if args.output:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, 'w') as f:
+                f.write(report)
+            print(f"Report saved to: {output_path}")
+        else:
+            output_file = save_report(report, args.output_dir, args.format)
+            print(f"Report saved to: {output_file}")
+
+
+if __name__ == "__main__":
+    main()

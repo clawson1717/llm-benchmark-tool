@@ -34,19 +34,60 @@ A Python tool for benchmarking multiple Large Language Models (LLMs) simultaneou
    python src/benchmark.py "Explain quantum computing in simple terms"
    ```
 
+4. **View the results**:
+   ```bash
+   python src/view_results.py results/benchmark_20240115_143022.json
+   ```
+
 ## Project Structure
 
 ```
 llm-benchmark-tool/
-├── src/              # Source code
-│   └── benchmark.py  # Main benchmarking script
-├── config/           # Configuration files
-│   └── models.json   # Model definitions
-├── examples/         # Sample prompts
-│   └── prompts.txt   # Example prompts
-├── results/          # Output directory (gitignored)
-└── requirements.txt  # Python dependencies
+├── src/                  # Source code
+│   ├── benchmark.py      # Main benchmarking script
+│   └── view_results.py   # Results viewer and report generator
+├── config/               # Configuration files
+│   └── models.json       # Model definitions
+├── examples/             # Sample prompts
+│   └── prompts.txt       # Example prompts
+├── results/              # Output directory (gitignored)
+└── requirements.txt      # Python dependencies
 ```
+
+## Results Viewer
+
+The `view_results.py` script generates formatted reports from benchmark JSON output.
+
+### Basic Usage
+
+```bash
+# Generate markdown report (default)
+python src/view_results.py results/benchmark_20240115_143022.json
+
+# Generate HTML report
+python src/view_results.py results/benchmark_20240115_143022.json --format html
+
+# Pretty print to console
+python src/view_results.py results/benchmark_20240115_143022.json --format console
+
+# Include side-by-side comparison view
+python src/view_results.py results/benchmark_20240115_143022.json --side-by-side
+```
+
+### Options
+
+- `--format {markdown,html,console}` - Output format (default: markdown)
+- `--output-dir DIR` - Directory to save reports (default: results)
+- `--output FILE` - Specific output file path
+- `--side-by-side` - Include full response comparison view
+
+### Report Contents
+
+All reports include:
+- **Prompt Used** - The original benchmark prompt
+- **Summary Statistics** - Success rate, average response time, fastest/slowest models, total tokens
+- **Results Table** - Model responses with status, timing, and token counts
+- **Failed Requests** - Details of any failed API calls (if applicable)
 
 ## Configuration
 
