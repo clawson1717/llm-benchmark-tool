@@ -167,7 +167,7 @@ def query_model(model_id: str, prompt: str, api_key: str, max_retries: int = 3) 
     }
 
 
-def run_benchmark(prompt: str, models: list, api_key: str, max_workers: int = 5, max_retries: int = 3) -> dict:
+def run_benchmark(prompt: str, models: list, api_key: str, max_workers: int = 5, max_retries: int = 3, quiet: bool = False) -> dict:
     """Run benchmark across multiple models in parallel.
     
     Args:
@@ -176,6 +176,7 @@ def run_benchmark(prompt: str, models: list, api_key: str, max_workers: int = 5,
         api_key: The OpenRouter API key
         max_workers: Maximum number of concurrent requests
         max_retries: Maximum retry attempts per model on transient errors
+        quiet: If True, suppress progress bar and status updates
     
     Returns:
         Dictionary containing all benchmark results
@@ -188,16 +189,18 @@ def run_benchmark(prompt: str, models: list, api_key: str, max_workers: int = 5,
         "results": []
     }
     
-    # Create progress bar
+    # Create progress bar (disabled if quiet mode)
     pbar = tqdm(
         total=len(models),
         desc="Starting benchmark",
         bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
         ncols=80,
-        unit="model"
+        unit="model",
+        disable=quiet
     )
     
     completed = 0
+    errors = []
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_model = {
@@ -212,32 +215,46 @@ def run_benchmark(prompt: str, models: list, api_key: str, max_workers: int = 5,
                 results["results"].append(result)
                 completed += 1
                 
+                # Collect errors for quiet mode
+                if not result["success"]:
+                    errors.append(f"{model['name']}: {result['error']}")
+                
                 # Update progress bar with current status
-                status_icon = "✓" if result["success"] else "✗"
-                pbar.set_description(
-                    f"{status_icon} {model['name'][:30]:<30} ({result['response_time']:.2f}s)"
-                )
-                pbar.update(1)
+                if not quiet:
+                    status_icon = "✓" if result["success"] else "✗"
+                    pbar.set_description(
+                        f"{status_icon} {model['name'][:30]:<30} ({result['response_time']:.2f}s)"
+                    )
+                    pbar.update(1)
             except Exception as e:
                 completed += 1
-                pbar.set_description(f"✗ {model['name'][:30]:<30} (Error)")
+                error_msg = str(e)
+                errors.append(f"{model['name']}: {error_msg}")
+                if not quiet:
+                    pbar.set_description(f"✗ {model['name'][:30]:<30} (Error)")
+                    pbar.update(1)
                 results["results"].append({
                     "model": model["id"],
                     "success": False,
                     "response": None,
                     "response_time": 0,
                     "tokens_used": 0,
-                    "error": str(e)
+                    "error": error_msg
                 })
-                pbar.update(1)
     
     pbar.close()
     
     # Sort results by model name for consistency
     results["results"].sort(key=lambda x: x["model"])
     
-    # Print summary of completed queries
-    print(f"\n✓ Completed {completed}/{len(models)} model queries")
+    # Print summary of completed queries (only in non-quiet mode)
+    if not quiet:
+        print(f"\n✓ Completed {completed}/{len(models)} model queries")
+    elif errors:
+        # In quiet mode, only print errors
+        print("\nErrors encountered:")
+        for error in errors:
+            print(f"  ✗ {error}")
     
     return results
 
@@ -411,6 +428,11 @@ def main():
         action="store_true",
         help="Save the prompt to a separate text file alongside results"
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Suppress progress bar and status updates. Only show errors and final summary. Useful for CI/CD pipelines."
+    )
     
     args = parser.parse_args()
     
@@ -454,29 +476,41 @@ def main():
             print("Use --list-providers to see available providers")
             sys.exit(1)
         provider_names = ", ".join(args.provider)
-        print(f"\nFiltered to {len(models)} models from provider(s): {provider_names}")
+        if not args.quiet:
+            print(f"\nFiltered to {len(models)} models from provider(s): {provider_names}")
     
-    print(f"\nRunning benchmark with {len(models)} models...")
-    print(f"Prompt: {args.prompt}")
-    print(f"Max retries per request: {args.max_retries}\n")
+    if not args.quiet:
+        print(f"\nRunning benchmark with {len(models)} models...")
+        print(f"Prompt: {args.prompt}")
+        print(f"Max retries per request: {args.max_retries}\n")
     
     # Run benchmark
-    results = run_benchmark(args.prompt, models, args.api_key, args.max_workers, args.max_retries)
+    results = run_benchmark(args.prompt, models, args.api_key, args.max_workers, args.max_retries, args.quiet)
     
     # Save results based on format
     if args.format == "csv":
         output_file = save_results_csv(results, args.output_dir)
     else:
         output_file = save_results(results, args.output_dir)
-    print(f"\nResults saved to: {output_file}")
     
-    # Save prompt to separate file if requested
-    if args.save_prompt:
-        prompt_file = save_prompt(args.prompt, args.output_dir)
-        print(f"Prompt saved to: {prompt_file}")
-    
-    # Print summary
-    print_summary(results)
+    if args.quiet:
+        # In quiet mode, only print minimal output
+        print(f"Results saved to: {output_file}")
+        # Print concise summary
+        success_count = sum(1 for r in results["results"] if r["success"])
+        failed_count = len(results["results"]) - success_count
+        avg_time = sum(r["response_time"] for r in results["results"]) / len(results["results"]) if results["results"] else 0
+        print(f"Summary: {success_count}/{len(results['results'])} succeeded, {failed_count} failed, avg response time: {avg_time:.2f}s")
+    else:
+        print(f"\nResults saved to: {output_file}")
+        
+        # Save prompt to separate file if requested
+        if args.save_prompt:
+            prompt_file = save_prompt(args.prompt, args.output_dir)
+            print(f"Prompt saved to: {prompt_file}")
+        
+        # Print summary
+        print_summary(results)
 
 
 if __name__ == "__main__":

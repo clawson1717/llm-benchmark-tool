@@ -104,6 +104,36 @@ python src/benchmark.py "Explain quantum computing" --provider google --format c
 
 Provider names are case-insensitive (e.g., `openai`, `OpenAI`, and `OPENAI` all work).
 
+## Quiet Mode
+
+Run benchmarks with minimal output for CI/CD pipelines or background execution.
+
+### Usage
+
+```bash
+# Run with minimal output (no progress bar)
+python src/benchmark.py "Explain quantum computing" --quiet
+
+# Combine with other options
+python src/benchmark.py "Explain quantum computing" --quiet --format csv
+```
+
+### Quiet Mode Behavior
+
+When `--quiet` is enabled:
+- **Progress bar is suppressed** - No tqdm progress updates
+- **Status updates are hidden** - No per-model status messages
+- **Errors are still shown** - Any errors encountered are printed
+- **Final summary is concise** - One-line summary with success count and average response time
+- **Results are still saved** - JSON/CSV output files are created normally
+
+### Use Cases
+
+- **CI/CD pipelines** - Clean logs without progress bars
+- **Background execution** - Run benchmarks without terminal clutter
+- **Automated scripts** - Easy-to-parse minimal output
+- **Cron jobs** - Non-interactive execution
+
 ## Save Prompt Option
 
 Save the prompt to a separate, readable text file alongside the benchmark results.
