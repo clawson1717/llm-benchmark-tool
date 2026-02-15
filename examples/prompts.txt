@@ -1,0 +1,22 @@
+# Example Prompts for LLM Benchmarking
+
+## Creative Writing
+Write a haiku about artificial intelligence.
+
+## Reasoning
+If a train travels 60 miles per hour and needs to cover 240 miles, how long will the journey take? Explain your reasoning.
+
+## Code Generation
+Write a Python function that calculates the Fibonacci sequence up to n terms.
+
+## Analysis
+Compare and contrast the advantages of renewable energy versus fossil fuels.
+
+## Explanation
+Explain how blockchain technology works to a 10-year-old.
+
+## Problem Solving
+You have a 3-gallon jug and a 5-gallon jug. How can you measure exactly 4 gallons of water?
+
+## Summarization
+Summarize the key principles of object-oriented programming in 3 sentences or less.

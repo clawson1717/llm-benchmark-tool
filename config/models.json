@@ -1,0 +1,44 @@
+{
+  "models": [
+    {
+      "id": "openai/gpt-4o-mini",
+      "name": "GPT-4o Mini",
+      "provider": "OpenAI",
+      "description": "Fast and affordable model for everyday tasks",
+      "temperature": 0.7,
+      "max_tokens": 1000
+    },
+    {
+      "id": "anthropic/claude-3.5-sonnet",
+      "name": "Claude 3.5 Sonnet",
+      "provider": "Anthropic",
+      "description": "Balanced performance and reasoning capabilities",
+      "temperature": 0.7,
+      "max_tokens": 1000
+    },
+    {
+      "id": "google/gemini-flash-1.5",
+      "name": "Gemini 1.5 Flash",
+      "provider": "Google",
+      "description": "Fast multimodal model from Google",
+      "temperature": 0.7,
+      "max_tokens": 1000
+    },
+    {
+      "id": "meta-llama/llama-3.1-70b-instruct",
+      "name": "Llama 3.1 70B",
+      "provider": "Meta",
+      "description": "Open source model with strong performance",
+      "temperature": 0.7,
+      "max_tokens": 1000
+    },
+    {
+      "id": "mistralai/mistral-large",
+      "name": "Mistral Large",
+      "provider": "Mistral AI",
+      "description": "European LLM with excellent multilingual capabilities",
+      "temperature": 0.7,
+      "max_tokens": 1000
+    }
+  ]
+}
