@@ -78,6 +78,32 @@ python src/benchmark.py "Explain quantum computing" --max-retries 5
 
 Retry attempts are logged to console so you can see when retries occur.
 
+## Provider Filtering
+
+Filter models by provider to benchmark only specific LLM providers.
+
+### List Available Providers
+
+```bash
+# Show all available providers and model counts
+python src/benchmark.py --list-providers
+```
+
+### Filter by Provider
+
+```bash
+# Benchmark only OpenAI models
+python src/benchmark.py "Explain quantum computing" --provider openai
+
+# Benchmark multiple specific providers
+python src/benchmark.py "Explain quantum computing" --provider openai --provider anthropic
+
+# Combine with other options
+python src/benchmark.py "Explain quantum computing" --provider google --format csv
+```
+
+Provider names are case-insensitive (e.g., `openai`, `OpenAI`, and `OPENAI` all work).
+
 ## CSV Export
 
 The benchmark tool supports exporting results directly to CSV format for easy analysis in spreadsheet applications.

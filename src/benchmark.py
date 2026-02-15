@@ -34,6 +34,38 @@ def load_config(config_path: str = "config/models.json") -> dict:
         return json.load(f)
 
 
+def get_unique_providers(models: list) -> list:
+    """Get a sorted list of unique provider names from models."""
+    providers = set()
+    for model in models:
+        provider = model.get("provider")
+        if provider:
+            providers.add(provider.lower())
+    return sorted(providers)
+
+
+def filter_models_by_provider(models: list, providers: list) -> list:
+    """Filter models to only include those from specified providers.
+    
+    Args:
+        models: List of model configuration dictionaries
+        providers: List of provider names to filter by (case-insensitive)
+    
+    Returns:
+        Filtered list of models from the specified providers
+    """
+    if not providers:
+        return models
+    
+    providers_lower = [p.lower() for p in providers]
+    filtered = []
+    for model in models:
+        model_provider = model.get("provider", "").lower()
+        if model_provider in providers_lower:
+            filtered.append(model)
+    return filtered
+
+
 def is_transient_error(exception) -> bool:
     """Check if an exception represents a transient error that should be retried.
     
@@ -323,6 +355,16 @@ def main():
         default="json",
         help="Output format (default: json)"
     )
+    parser.add_argument(
+        "--provider",
+        action="append",
+        help="Filter models by provider (can be used multiple times, e.g., --provider openai --provider anthropic)"
+    )
+    parser.add_argument(
+        "--list-providers",
+        action="store_true",
+        help="List all available providers and exit"
+    )
     
     args = parser.parse_args()
     
@@ -344,6 +386,29 @@ def main():
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON in configuration: {e}")
         sys.exit(1)
+    
+    # Handle --list-providers option
+    if args.list_providers:
+        providers = get_unique_providers(models)
+        print("\nAvailable providers:")
+        print("-" * 30)
+        for provider in providers:
+            # Count models for this provider
+            count = sum(1 for m in models if m.get("provider", "").lower() == provider)
+            print(f"  {provider} ({count} model{'s' if count != 1 else ''})")
+        print()
+        sys.exit(0)
+    
+    # Filter models by provider if specified
+    if args.provider:
+        models = filter_models_by_provider(models, args.provider)
+        if not models:
+            providers_str = ", ".join(args.provider)
+            print(f"Error: No models found for provider(s): {providers_str}")
+            print("Use --list-providers to see available providers")
+            sys.exit(1)
+        provider_names = ", ".join(args.provider)
+        print(f"\nFiltered to {len(models)} models from provider(s): {provider_names}")
     
     print(f"\nRunning benchmark with {len(models)} models...")
     print(f"Prompt: {args.prompt}")
