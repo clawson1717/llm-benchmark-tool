@@ -142,13 +142,13 @@ def generate_markdown(data: dict, include_side_by_side: bool = False) -> str:
     
     lines = [
         "# LLM Benchmark Results\n",
-        "## Benchmark Overview\n",
-        f"**Timestamp:** {timestamp}\n",
-        f"**Models Tested:** {stats['total_models']}\n",
-        "### Prompt Used",
+        "## Prompt Used\n",
         "```",
         prompt,
         "```\n",
+        "## Benchmark Overview\n",
+        f"**Timestamp:** {timestamp}\n",
+        f"**Models Tested:** {stats['total_models']}\n",
         "## Summary Statistics\n",
         f"- **Success Rate:** {stats['success_rate']:.1f}% ({stats['successful_count']}/{stats['total_models']})",
         f"- **Average Response Time:** {stats['avg_response_time']:.2f}s",
@@ -203,14 +203,22 @@ def generate_html(data: dict, include_side_by_side: bool = False) -> str:
         h1 {{ color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }}
         h2 {{ color: #34495e; margin-top: 30px; }}
         h3 {{ color: #555; }}
-        .prompt-box {{
+        .prompt-section {{
             background: #f8f9fa;
+            border: 2px solid #3498db;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+        }}
+        .prompt-box {{
+            background: #fff;
             border-left: 4px solid #3498db;
             padding: 15px;
             margin: 15px 0;
             border-radius: 4px;
             white-space: pre-wrap;
             font-family: 'Courier New', monospace;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }}
         .stats-grid {{
             display: grid;
@@ -296,12 +304,14 @@ def generate_html(data: dict, include_side_by_side: bool = False) -> str:
 <body>
     <h1>🚀 LLM Benchmark Results</h1>
     
+    <div class="prompt-section">
+        <h2>📝 Prompt Used</h2>
+        <div class="prompt-box">{prompt}</div>
+    </div>
+    
     <h2>Benchmark Overview</h2>
     <p><strong>Timestamp:</strong> {timestamp}</p>
     <p><strong>Models Tested:</strong> {stats['total_models']}</p>
-    
-    <h3>Prompt Used</h3>
-    <div class="prompt-box">{prompt}</div>
     
     <h2>Summary Statistics</h2>
     <div class="stats-grid">
@@ -434,11 +444,8 @@ def generate_console(data: dict, include_side_by_side: bool = False) -> str:
         "  LLM BENCHMARK RESULTS",
         "=" * 70,
         "",
-        f"  Timestamp: {timestamp}",
-        f"  Models Tested: {stats['total_models']}",
-        "",
-        "  PROMPT:",
-        "  " + "-" * 66,
+        "  📝 PROMPT USED:",
+        "  " + "=" * 66,
     ]
     
     # Wrap prompt lines
@@ -450,7 +457,11 @@ def generate_console(data: dict, include_side_by_side: bool = False) -> str:
             lines.append(f"  {chunk}")
     
     lines.extend([
-        "  " + "-" * 66,
+        "  " + "=" * 66,
+        "",
+        "  BENCHMARK OVERVIEW:",
+        f"    Timestamp:     {timestamp}",
+        f"    Models Tested: {stats['total_models']}",
         "",
         "  SUMMARY STATISTICS:",
         f"    Success Rate:      {stats['success_rate']:.1f}% ({stats['successful_count']}/{stats['total_models']})",

@@ -104,6 +104,37 @@ python src/benchmark.py "Explain quantum computing" --provider google --format c
 
 Provider names are case-insensitive (e.g., `openai`, `OpenAI`, and `OPENAI` all work).
 
+## Save Prompt Option
+
+Save the prompt to a separate, readable text file alongside the benchmark results.
+
+### Usage
+
+```bash
+# Save prompt alongside results
+python src/benchmark.py "Explain quantum computing in simple terms" --save-prompt
+```
+
+When using `--save-prompt`, a text file named `prompt_YYYYMMDD_HHMMSS.txt` is created in the results directory alongside the JSON results file. This makes it easy to:
+
+- Quickly reference what was tested without opening JSON files
+- Keep a readable record of prompts for documentation
+- Compare prompts across different benchmark runs
+
+### Output Format
+
+The saved prompt file includes:
+- Timestamp of when the prompt was saved
+- The full prompt text
+
+Example output file (`prompt_20240215_114030.txt`):
+```
+Prompt saved at: 2024-02-15T11:40:30.123456
+============================================================
+
+Explain quantum computing in simple terms
+```
+
 ## CSV Export
 
 The benchmark tool supports exporting results directly to CSV format for easy analysis in spreadsheet applications.

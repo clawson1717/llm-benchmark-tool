@@ -290,6 +290,47 @@ def save_results_csv(results: dict, output_dir: str = "results") -> str:
     return str(filepath)
 
 
+def save_prompt(prompt: str, output_dir: str = "results") -> str:
+    """Save the prompt text to a separate file alongside results."""
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"prompt_{timestamp}.txt"
+    filepath = output_path / filename
+    
+    with open(filepath, 'w', encoding='utf-8') as f:
+        f.write(f"Prompt saved at: {datetime.now().isoformat()}\n")
+        f.write("=" * 60 + "\n\n")
+        f.write(prompt)
+        f.write("\n")
+    
+    return str(filepath)
+    
+    with open(filepath, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        # Write header row
+        writer.writerow(['model', 'status', 'response_time', 'tokens_used', 'response_preview'])
+        # Write data rows
+        for result in results['results']:
+            status = 'success' if result['success'] else 'failed'
+            response_preview = ''
+            if result['success'] and result['response']:
+                response_preview = result['response'][:200].replace('\n', ' ').replace('\r', '')
+            elif not result['success'] and result['error']:
+                response_preview = result['error'][:200].replace('\n', ' ').replace('\r', '')
+            
+            writer.writerow([
+                result['model'],
+                status,
+                result['response_time'],
+                result.get('tokens_used', 0),
+                response_preview
+            ])
+    
+    return str(filepath)
+
+
 def print_summary(results: dict):
     """Print a formatted summary of benchmark results."""
     print("\n" + "=" * 60)
@@ -365,6 +406,11 @@ def main():
         action="store_true",
         help="List all available providers and exit"
     )
+    parser.add_argument(
+        "--save-prompt",
+        action="store_true",
+        help="Save the prompt to a separate text file alongside results"
+    )
     
     args = parser.parse_args()
     
@@ -423,6 +469,11 @@ def main():
     else:
         output_file = save_results(results, args.output_dir)
     print(f"\nResults saved to: {output_file}")
+    
+    # Save prompt to separate file if requested
+    if args.save_prompt:
+        prompt_file = save_prompt(args.prompt, args.output_dir)
+        print(f"Prompt saved to: {prompt_file}")
     
     # Print summary
     print_summary(results)
