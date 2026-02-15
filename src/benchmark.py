@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 import requests
+from tqdm import tqdm
 
 
 # Default API endpoint
@@ -96,6 +97,17 @@ def run_benchmark(prompt: str, models: list, api_key: str, max_workers: int = 5)
         "results": []
     }
     
+    # Create progress bar
+    pbar = tqdm(
+        total=len(models),
+        desc="Starting benchmark",
+        bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+        ncols=80,
+        unit="model"
+    )
+    
+    completed = 0
+    
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_model = {
             executor.submit(query_model, model["id"], prompt, api_key): model
@@ -107,9 +119,17 @@ def run_benchmark(prompt: str, models: list, api_key: str, max_workers: int = 5)
             try:
                 result = future.result()
                 results["results"].append(result)
-                print(f"  ✓ {model['name']}: {result['response_time']:.2f}s", flush=True)
+                completed += 1
+                
+                # Update progress bar with current status
+                status_icon = "✓" if result["success"] else "✗"
+                pbar.set_description(
+                    f"{status_icon} {model['name'][:30]:<30} ({result['response_time']:.2f}s)"
+                )
+                pbar.update(1)
             except Exception as e:
-                print(f"  ✗ {model['name']}: Error - {str(e)}", flush=True)
+                completed += 1
+                pbar.set_description(f"✗ {model['name'][:30]:<30} (Error)")
                 results["results"].append({
                     "model": model["id"],
                     "success": False,
@@ -118,9 +138,15 @@ def run_benchmark(prompt: str, models: list, api_key: str, max_workers: int = 5)
                     "tokens_used": 0,
                     "error": str(e)
                 })
+                pbar.update(1)
+    
+    pbar.close()
     
     # Sort results by model name for consistency
     results["results"].sort(key=lambda x: x["model"])
+    
+    # Print summary of completed queries
+    print(f"\n✓ Completed {completed}/{len(models)} model queries")
     
     return results
 
